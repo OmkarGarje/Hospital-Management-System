@@ -929,6 +929,10 @@ const server = http.createServer((req, res) => {
   // Static File Serving
   // -------------------------------------------------------------------------
   let filePath = path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname);
+  if (!fs.existsSync(filePath)) {
+    const rootPath = path.join(__dirname, pathname === '/' ? 'index.html' : pathname);
+    if (fs.existsSync(rootPath)) filePath = rootPath;
+  }
   const ext = path.extname(filePath);
   const contentTypes = {
     '.html': 'text/html; charset=utf-8',

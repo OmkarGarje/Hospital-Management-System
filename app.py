@@ -29,6 +29,8 @@ def get_db_connection():
 
 @app.route("/")
 def index():
+    if os.path.exists(os.path.join(os.path.dirname(__file__), "index.html")):
+        return send_from_directory(os.path.dirname(__file__), "index.html")
     return send_from_directory(app.static_folder, "index.html")
 
 
