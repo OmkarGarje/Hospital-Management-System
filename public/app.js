@@ -5,7 +5,7 @@
  * or runs autonomously in-memory/localStorage so all actions work in any environment!
  */
 
-const API_BASE = '/api';
+let API_BASE = '/api';
 let isBackendOnline = false;
 
 let currentUser = null; // { role: 'doctor' | 'patient' | 'admin', ... }
@@ -102,20 +102,49 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function checkBackendAndLoadData() {
   const statusIndicator = document.getElementById('system-status-indicator');
   const statusText = document.getElementById('status-text');
+  const authStatus = document.getElementById('auth-system-status');
 
-  try {
-    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(1500) });
-    if (res.ok) {
-      isBackendOnline = true;
-      statusIndicator.querySelector('.status-dot').className = 'status-dot online';
-      statusText.textContent = 'SQL Connected (Port 3000)';
-    } else {
-      throw new Error();
+  const candidates = [
+    '/api',
+    'http://localhost:5000/api',
+    'http://127.0.0.1:5000/api',
+    'http://localhost:3000/api',
+    'http://127.0.0.1:3000/api',
+    'http://localhost:8080/api'
+  ];
+
+  isBackendOnline = false;
+  for (const base of candidates) {
+    try {
+      const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(1200) });
+      if (res.ok) {
+        API_BASE = base;
+        isBackendOnline = true;
+        const portDisplay = base.startsWith('http') ? base.replace('/api', '').replace('http://', '') : 'Same-Origin';
+        if (statusIndicator) {
+          const dot = statusIndicator.querySelector('.status-dot');
+          if (dot) dot.className = 'status-dot online';
+        }
+        if (statusText) statusText.textContent = `SQLite Connected (${portDisplay})`;
+        if (authStatus) {
+          authStatus.className = 'auth-status-pill online';
+          authStatus.innerHTML = `🟢 <strong>SQLite Database Active (${portDisplay})</strong> &bull; Changes write directly to database/hospital.db`;
+        }
+        break;
+      }
+    } catch (e) {}
+  }
+
+  if (!isBackendOnline) {
+    if (statusIndicator) {
+      const dot = statusIndicator.querySelector('.status-dot');
+      if (dot) dot.className = 'status-dot standalone';
     }
-  } catch (e) {
-    isBackendOnline = false;
-    statusIndicator.querySelector('.status-dot').className = 'status-dot standalone';
-    statusText.textContent = 'Standalone Mode (Dual Engine)';
+    if (statusText) statusText.textContent = 'Browser Storage (Server Offline)';
+    if (authStatus) {
+      authStatus.className = 'auth-status-pill offline';
+      authStatus.innerHTML = `🟡 <strong>Standalone / Demo Mode</strong> &bull; Local server not detected. Run <code>run_server.cmd</code> on PC to connect SQLite database.`;
+    }
   }
 
   await loadAllData();
@@ -769,7 +798,7 @@ async function handleDoctorRegistrationSubmit(e) {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
-      showToast(`Doctor added! Assigned ID: #DOC-${result.doctor_id}`, 'success');
+      showToast(`Doctor added to SQLite database! Assigned ID: #DOC-${result.doctor_id}`, 'success');
     } catch (err) {
       showToast(`Failed to add doctor: ${err.message}`, 'error');
       return;
@@ -787,7 +816,7 @@ async function handleDoctorRegistrationSubmit(e) {
       consultation_fee: fee
     });
     saveLocalState();
-    showToast(`Doctor added to registry! ID: #DOC-${newDocId}`, 'success');
+    showToast(`Doctor saved to browser storage! ID: #DOC-${newDocId} (Start local server to write to SQLite)`, 'info');
   }
 
   form.reset();
@@ -811,7 +840,7 @@ async function handlePatientRegistrationSubmit(e) {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
-      showToast(`Patient registered! Assigned ID: #${result.patient_id}`, 'success');
+      showToast(`Patient registered in SQLite database! Assigned ID: #${result.patient_id}`, 'success');
     } catch (err) {
       showToast(`Registration failed: ${err.message}`, 'error');
       return;
@@ -830,7 +859,7 @@ async function handlePatientRegistrationSubmit(e) {
       address: data.address
     });
     saveLocalState();
-    showToast(`Patient registered in database! ID: #${newId}`, 'success');
+    showToast(`Patient saved to browser storage! ID: #${newId} (Start local server to write to SQLite)`, 'info');
   }
 
   form.reset();
@@ -841,6 +870,8 @@ async function handlePatientRegistrationSubmit(e) {
 // 2. Submit Appointment Booking
 async function handleAppointmentBookingSubmit(e) {
   e.preventDefault();
+  const form = e.target;
+  const raw = Object.fromEntries(new FormData(form).entries());
   const patientId = (currentUser && currentUser.role === 'patient')
     ? currentUser.patient_id
     : parseInt(raw.patient_id || document.getElementById('modal-select-patient')?.value, 10);
@@ -861,7 +892,7 @@ async function handleAppointmentBookingSubmit(e) {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
-      showToast(`Appointment confirmed! Ref: #APT-${result.appointment_id}`, 'success');
+      showToast(`Appointment confirmed in SQLite database! Ref: #APT-${result.appointment_id}`, 'success');
     } catch (err) {
       showToast(`Booking error: ${err.message}`, 'error');
       return;
@@ -943,7 +974,7 @@ async function handleAdmissionSubmit(e) {
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error);
-      showToast('Patient admitted successfully! Bed marked occupied.', 'success');
+      showToast('Patient admitted and recorded in SQLite database! Bed marked occupied.', 'success');
     } catch (err) {
       showToast(`Admission error: ${err.message}`, 'error');
       return;
@@ -974,7 +1005,7 @@ async function handleAdmissionSubmit(e) {
     });
 
     saveLocalState();
-    showToast('Inpatient admitted. Bed status updated.', 'success');
+    showToast('Inpatient admitted in browser demo mode. (Start local server to write to SQLite)', 'info');
   }
 
   form.reset();
@@ -1094,24 +1125,47 @@ async function handleDiagnosisSubmit(e) {
   const apptId = parseInt(raw.appointment_id, 10);
   const appt = state.appointments.find(a => a.appointment_id === apptId);
 
-  const newRecId = (state.records.length > 0 ? Math.max(...state.records.map(r => r.record_id)) : 0) + 1;
-  state.records.unshift({
-    record_id: newRecId,
-    patient_id: appt ? appt.patient_id : 1,
-    patient_name: appt ? appt.patient_name : 'Patient',
-    doctor_name: appt ? appt.doctor_name : 'Doctor',
-    specialization: appt ? appt.specialization : 'General',
-    appointment_id: apptId,
-    appointment_date: appt ? appt.appointment_date : '2026-10-06',
-    diagnosis: raw.diagnosis,
-    treatment: raw.treatment,
-    notes: raw.notes
-  });
+  if (isBackendOnline) {
+    try {
+      const res = await fetch(`${API_BASE}/medical-records`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appointment_id: apptId,
+          diagnosis: raw.diagnosis,
+          treatment: raw.treatment,
+          notes: raw.notes
+        })
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error);
+      showToast('Prescription & diagnosis saved to SQLite database!', 'success');
+    } catch (err) {
+      showToast(`EMR save error: ${err.message}`, 'error');
+      return;
+    }
+  } else {
+    const newRecId = (state.records.length > 0 ? Math.max(...state.records.map(r => r.record_id)) : 0) + 1;
+    state.records.unshift({
+      record_id: newRecId,
+      patient_id: appt ? appt.patient_id : 1,
+      patient_name: appt ? appt.patient_name : 'Patient',
+      doctor_name: appt ? appt.doctor_name : 'Doctor',
+      specialization: appt ? appt.specialization : 'General',
+      appointment_id: apptId,
+      appointment_date: appt ? appt.appointment_date : '2026-10-06',
+      diagnosis: raw.diagnosis,
+      treatment: raw.treatment,
+      notes: raw.notes
+    });
 
-  saveLocalState();
-  showToast('Clinical Diagnosis & Prescription saved to EMR!', 'success');
+    saveLocalState();
+    showToast('Clinical Diagnosis & Prescription saved to browser EMR! (Start local server to write to SQLite)', 'info');
+  }
+
   form.reset();
   closeModal('modal-diagnosis');
+  await loadAllData();
   switchView('records');
 }
 

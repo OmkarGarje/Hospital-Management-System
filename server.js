@@ -926,6 +926,34 @@ const server = http.createServer((req, res) => {
   }
 
   // -------------------------------------------------------------------------
+  // API: POST /api/medical-records
+  // -------------------------------------------------------------------------
+  if (method === 'POST' && pathname === '/api/medical-records') {
+    parseBody(req, (err, body) => {
+      if (err) return sendJson(res, 400, { error: 'Invalid JSON request' });
+      const { appointment_id, diagnosis, treatment, notes } = body;
+      if (!appointment_id || !diagnosis || !treatment) {
+        return sendJson(res, 400, { error: 'Appointment ID, diagnosis, and treatment are required.' });
+      }
+
+      try {
+        const stmt = db.prepare(`
+          INSERT INTO Medical_Records (appointment_id, diagnosis, treatment, notes)
+          VALUES (?, ?, ?, ?)
+        `);
+        const info = stmt.run(appointment_id, diagnosis, treatment, notes || '');
+        return sendJson(res, 201, {
+          message: 'Medical record and prescription saved successfully',
+          record_id: Number(info.lastInsertRowid)
+        });
+      } catch (dbErr) {
+        return sendJson(res, 500, { error: dbErr.message });
+      }
+    });
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // Static File Serving
   // -------------------------------------------------------------------------
   let filePath = path.join(PUBLIC_DIR, pathname === '/' ? 'index.html' : pathname);
@@ -961,7 +989,12 @@ const server = http.createServer((req, res) => {
 
 // Helper utilities
 function sendJson(res, statusCode, data) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  });
   res.end(JSON.stringify(data));
 }
 
@@ -979,28 +1012,45 @@ function parseBody(req, callback) {
 }
 
 const HOST = '127.0.0.1';
+const PREFERRED_PORTS = [
+  parseInt(process.env.PORT, 10) || 5000,
+  3000,
+  5001,
+  8080,
+  4000
+];
 
-// Start Server with Port Fallback and EACCES handling
-function startServer(portToTry) {
-  server.listen(portToTry, HOST, () => {
-    console.log(`=======================================================`);
-    console.log(` MediCore Hospital Management System is Live!`);
-    console.log(` Access Dashboard at: http://${HOST}:${portToTry}`);
-    console.log(` Localhost URL:       http://localhost:${portToTry}`);
-    console.log(` Database:            ${DB_PATH}`);
-    console.log(`=======================================================`);
-  }).on('error', (err) => {
+// Robust port binding with zero listener stacking
+function tryListen(index = 0) {
+  if (index >= PREFERRED_PORTS.length) {
+    console.error('ERROR: Could not bind server to any available port in candidate list.');
+    return;
+  }
+  const port = PREFERRED_PORTS[index];
+
+  const onError = (err) => {
     if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
-      console.log(`Port ${portToTry} unavailable (${err.code}), trying port ${portToTry + 1}...`);
-      if (portToTry < 3015) {
-        startServer(portToTry + 1);
-      } else {
-        console.error('Could not find an open port in range 3000-3015.');
-      }
+      console.log(`Port ${port} is occupied (${err.code}), attempting next available port...`);
+      server.removeListener('listening', onListening);
+      tryListen(index + 1);
     } else {
       console.error('Server error:', err);
     }
-  });
+  };
+
+  const onListening = () => {
+    server.removeListener('error', onError);
+    console.log(`=======================================================`);
+    console.log(` MediCore Hospital Management System is Live!`);
+    console.log(` Access Dashboard at: http://${HOST}:${port}`);
+    console.log(` Localhost URL:       http://localhost:${port}`);
+    console.log(` Database:            ${DB_PATH}`);
+    console.log(`=======================================================`);
+  };
+
+  server.once('error', onError);
+  server.once('listening', onListening);
+  server.listen(port, HOST);
 }
 
-startServer(PORT);
+tryListen(0);
